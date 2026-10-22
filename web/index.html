@@ -26,14 +26,18 @@
     .tool { margin-top: 8px; border-left: 3px solid var(--accent); padding: 6px 10px; background: #f3faf7; border-radius: 8px; }
     .tool b { font-family: Consolas, monospace; }
     .tool pre { white-space: pre-wrap; margin: 6px 0 0; font-size: 13px; }
-    .content { white-space: pre-wrap; }
+    .content p { margin: 0 0 10px; }
+    .content p:last-child { margin-bottom: 0; }
+    .content ul { margin: 0 0 10px; padding-left: 1.2rem; }
+    .content li { margin: 4px 0; }
     .banner { border: 1px solid #efd3a8; background: var(--warn-bg); color: var(--warn); border-radius: 16px; padding: 12px 14px; }
     form { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; position: sticky; bottom: 0; background: var(--paper); padding: 12px 0 20px; }
     form label { grid-column: 1 / -1; }
     textarea { resize: vertical; min-height: 64px; border-radius: 16px; border: 1px solid var(--line); padding: 12px; }
     .thinking { color: var(--muted); font-style: italic; }
+    .table-wrap { overflow-x: auto; }
     table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 14px; }
-    th, td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
+    th, td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; white-space: normal; overflow-wrap: anywhere; }
     th { background: #e7f5ef; }
   </style>
 </head>
@@ -73,22 +77,40 @@
     localStorage.setItem("oc-session", sessionId)
 
     const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]))
+    const inline = (value) => escapeHtml(value).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    const esTabla = (lines, index) => lines[index].includes("|") && lines[index + 1] && /^\s*\|?\s*:?-{3,}/.test(lines[index + 1])
+    const esLista = (line) => /^\s*[-*]\s+/.test(line)
 
     function renderText(value) {
-      const lines = String(value).split("\n")
+      const lines = String(value).replace(/\r\n/g, "\n").split("\n")
       let html = ""
-      for (let i = 0; i < lines.length; i += 1) {
-        if (lines[i].includes("|") && lines[i + 1] && /^\s*\|?\s*:?-{3,}/.test(lines[i + 1])) {
+      let i = 0
+      while (i < lines.length) {
+        if (!lines[i].trim()) { i += 1; continue }
+        if (esTabla(lines, i)) {
           const rows = []
           while (i < lines.length && lines[i].includes("|")) {
-            if (!/^\s*\|?\s*:?-{3,}/.test(lines[i])) rows.push(lines[i].split("|").filter((cell) => cell.trim() !== ""))
+            if (!/^\s*\|?\s*:?-{3,}/.test(lines[i])) rows.push(lines[i].split("|").map((cell) => cell.trim()).filter((cell, index, all) => cell !== "" || (index > 0 && index < all.length - 1)))
             i += 1
           }
-          i -= 1
-          html += "<table>" + rows.map((row, index) => `<tr>${row.map((cell) => index === 0 ? `<th>${escapeHtml(cell.trim())}</th>` : `<td>${escapeHtml(cell.trim())}</td>`).join("")}</tr>`).join("") + "</table>"
+          html += `<div class="table-wrap"><table>${rows.map((row, index) => `<tr>${row.map((cell) => index === 0 ? `<th>${inline(cell)}</th>` : `<td>${inline(cell)}</td>`).join("")}</tr>`).join("")}</table></div>`
           continue
         }
-        html += `<div>${escapeHtml(lines[i]).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</div>`
+        if (esLista(lines[i])) {
+          const items = []
+          while (i < lines.length && esLista(lines[i])) {
+            items.push(lines[i].replace(/^\s*[-*]\s+/, ""))
+            i += 1
+          }
+          html += `<ul>${items.map((item) => `<li>${inline(item)}</li>`).join("")}</ul>`
+          continue
+        }
+        const paragraph = []
+        while (i < lines.length && lines[i].trim() && !esTabla(lines, i) && !esLista(lines[i])) {
+          paragraph.push(lines[i])
+          i += 1
+        }
+        html += `<p>${paragraph.map(inline).join("<br>")}</p>`
       }
       return html
     }

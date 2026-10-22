@@ -30,7 +30,7 @@ Recorre `sol-001` a `sol-006`, repite `sol-001` para mostrar idempotencia y conf
 | Variable | Uso |
 |---|---|
 | `OPENAI_API_KEY` | Clave de Groq. No va al front, al repo ni a los logs. |
-| `OPENAI_MODEL` | Modelo. Por defecto `llama-3.3-70b-versatile`. |
+| `OPENAI_MODEL` | Modelo. Por defecto `qwen/qwen3.8-27b`. |
 | `OPENAI_BASE_URL` | Endpoint. Por defecto `https://api.groq.com/openai/v1`. |
 | `MAX_TOOL_ITERATIONS` | Tope de idas herramienta-modelo por turno. Por defecto 25. |
 | `MAX_SESSION_TOKENS` | Tope aproximado de la sesión. Por defecto 80000. |

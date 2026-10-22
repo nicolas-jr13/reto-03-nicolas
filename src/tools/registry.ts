@@ -32,18 +32,27 @@ export function resumirHerramienta(name: string, raw: string): string {
     const data = body.data ?? {}
     if (name === "oc_leer_paquete") {
       const solicitud = data.solicitud as { solicitud_id?: string } | undefined
-      const faltantes = Array.isArray(data.faltantes) ? data.faltantes.join(", ") : "ninguno"
-      return `Paquete ${solicitud?.solicitud_id ?? ""} leído. Faltantes: ${faltantes || "ninguno"}.`
+      const faltantes = Array.isArray(data.faltantes) ? data.faltantes.filter(Boolean) : []
+      const id = solicitud?.solicitud_id ?? "de la solicitud"
+      return faltantes.length ? `Leí ${id}. Faltan: ${faltantes.join(", ")}.` : `Leí ${id}. No falta ningún archivo.`
     }
     if (name === "oc_validar") {
       const bloqueos = Array.isArray(data.bloqueos) ? data.bloqueos.length : 0
       const confirmaciones = Array.isArray(data.confirmaciones) ? data.confirmaciones.length : 0
-      return `apta=${String(data.apta)}; bloqueos=${bloqueos}; confirmaciones=${confirmaciones}; retroactiva=${String(data.retroactiva)}.`
+      const partes = [
+        data.apta ? "El caso está apto." : "El caso no está apto.",
+        bloqueos === 0 ? "Sin bloqueos." : `${bloqueos} ${bloqueos === 1 ? "bloqueo" : "bloqueos"}.`,
+        confirmaciones === 0 ? "Sin confirmaciones." : `${confirmaciones} ${confirmaciones === 1 ? "confirmación" : "confirmaciones"}.`,
+      ]
+      if (data.retroactiva === true) partes.push("Es retroactiva.")
+      return partes.join(" ")
     }
-    if (name === "oc_construir_payload") return `Payload listo. Trazabilidad: ${String(data.trazabilidad ?? "")}.`
-    if (name === "oc_generar_evidencia") return `Evidencia ${String(data.ruta ?? "")}.`
+    if (name === "oc_construir_payload") return "La orden quedó armada para revisión."
+    if (name === "oc_generar_evidencia") return "Quedó la evidencia de aprobación."
     if (name === "oc_crear") {
-      return data.idempotente ? `OC existente ${String(data.numero_oc ?? "")}.` : `OC ${String(data.numero_oc ?? "")} creada.`
+      return data.idempotente
+        ? `La OC ${String(data.numero_oc ?? "")} ya existía. No se creó otra.`
+        : `Creé la OC ${String(data.numero_oc ?? "")}.`
     }
     return raw.slice(0, 280)
   } catch {

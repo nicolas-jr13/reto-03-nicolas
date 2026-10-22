@@ -37,7 +37,7 @@ Cada llamada queda en el historial y en `out/log.jsonl`. Un error del proveedor 
 
 ## 4. Modelo
 
-Proveedor Groq, modelo `llama-3.3-70b-versatile`, por el endpoint compatible con OpenAI (`https://api.groq.com/openai/v1`). El ciclo sigue llamando a `enviar(mensajes, herramientas)`; Groq entra solo con la URL y la clave. Lo elegí porque hay cupo gratuito, el modelo llama herramientas en paralelo y no hace falta un SDK propio.
+Proveedor Groq, modelo `qwen/qwen3.8-27b`, por el endpoint compatible con OpenAI (`https://api.groq.com/openai/v1`). El ciclo sigue llamando a `enviar(mensajes, herramientas)`; Groq entra solo con la URL y la clave. Lo elegí porque hay cupo gratuito y este modelo llama herramientas, incluidas varias en el mismo turno.
 
 Un caso de esta demo cabe en el cupo gratuito. El tope de iteraciones y el de tokens de sesión evitan dejar una conversación abierta si más adelante la cuenta pasa a un plan de pago.
 

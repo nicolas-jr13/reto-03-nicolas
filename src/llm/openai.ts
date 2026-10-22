@@ -17,7 +17,7 @@ function envInt(name: string, fallback: number): number {
 
 export function configuracionModelo(): { provider: string; model: string; baseUrl: string } {
   const baseUrl = (process.env.OPENAI_BASE_URL?.trim() || "https://api.groq.com/openai/v1").replace(/\/$/, "")
-  const model = process.env.OPENAI_MODEL?.trim() || "llama-3.3-70b-versatile"
+  const model = process.env.OPENAI_MODEL?.trim() || "qwen/qwen3.8-27b"
   const provider = baseUrl.includes("groq.com")
     ? "groq"
     : baseUrl.includes("googleapis.com")
@@ -39,38 +39,50 @@ export function crearAdaptador(): LlmAdapter {
         throw new Error("No hay clave de Groq en el servidor. Péguela en OPENAI_API_KEY dentro de .env y reinicie. La clave no se muestra aquí.")
       }
       const timeout = envInt("LLM_TIMEOUT_MS", 60_000)
-      let response: Response
-      try {
-        response = await fetch(`${baseUrl}/chat/completions`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
+      const cuerpo = JSON.stringify({
+        model,
+        temperature: 0,
+        messages: mensajes.map(haciaOpenAi),
+        tools: herramientas.map((tool) => ({
+          type: "function",
+          function: {
+            name: tool.name,
+            description: tool.description,
+            parameters: tool.parameters,
           },
-          body: JSON.stringify({
-            model,
-            temperature: 0,
-            messages: mensajes.map(haciaOpenAi),
-            tools: herramientas.map((tool) => ({
-              type: "function",
-              function: {
-                name: tool.name,
-                description: tool.description,
-                parameters: tool.parameters,
-              },
-            })),
-          }),
-          signal: AbortSignal.timeout(timeout),
-        })
-      } catch (error) {
-        if (error instanceof Error && error.name === "TimeoutError") {
-          throw new Error("El proveedor de lenguaje no respondió a tiempo. Intente de nuevo. La sesión sigue activa.")
+        })),
+      })
+      let raw = ""
+      let response: Response | null = null
+      for (let intento = 1; intento <= 4; intento += 1) {
+        try {
+          response = await fetch(`${baseUrl}/chat/completions`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              "Content-Type": "application/json",
+            },
+            body: cuerpo,
+            signal: AbortSignal.timeout(timeout),
+          })
+        } catch (error) {
+          if (error instanceof Error && error.name === "TimeoutError") {
+            throw new Error("El proveedor de lenguaje no respondió a tiempo. Intente de nuevo. La sesión sigue activa.")
+          }
+          throw new Error("No pude contactar al proveedor de lenguaje. La sesión sigue activa.")
         }
-        throw new Error("No pude contactar al proveedor de lenguaje. La sesión sigue activa.")
+        raw = await response.text()
+        if (response.status === 429 && intento < 4) {
+          await esperar(esperaPorCupo(response, raw))
+          continue
+        }
+        break
       }
-      const raw = await response.text()
-      if (!response.ok) {
-        throw new Error(`El proveedor de lenguaje rechazó la solicitud (${response.status}). La sesión sigue activa.`)
+      if (!response?.ok) {
+        if (response?.status === 429) {
+          throw new Error("Groq alcanzó el cupo gratis de 8.000 tokens por minuto. Espere un minuto y envíe el mismo mensaje otra vez. La sesión sigue activa.")
+        }
+        throw new Error(`El proveedor de lenguaje rechazó la solicitud (${response?.status ?? "sin respuesta"}). La sesión sigue activa.`)
       }
       let data: { choices?: { message?: OpenAiMessage }[] }
       try {
@@ -91,6 +103,43 @@ export function crearAdaptador(): LlmAdapter {
       }
     },
   }
+}
+
+function esperaPorCupo(response: Response, body: string): number {
+  const cabecera = aMilisegundos(response.headers.get("retry-after"))
+    ?? aMilisegundos(response.headers.get("x-ratelimit-reset-tokens"))
+  const texto = body.match(/try again in ([0-9.]+)s/i)
+  const cuerpo = texto?.[1] ? Math.ceil(Number(texto[1]) * 1000) : null
+  const espera = Math.max(cabecera ?? 0, cuerpo ?? 0, cabecera === null && cuerpo === null ? 8_000 : 500)
+  return Math.min(espera + 400, 45_000)
+}
+
+function aMilisegundos(valor: string | null): number | null {
+  if (!valor) return null
+  const texto = valor.trim()
+  if (/^\d+(\.\d+)?$/.test(texto)) return Math.ceil(Number(texto) * 1000)
+  let total = 0
+  let encontro = false
+  const minutos = texto.match(/(\d+)m(?!s)/)
+  const segundos = texto.match(/(\d+(?:\.\d+)?)s/)
+  const milis = texto.match(/(\d+)ms/)
+  if (minutos?.[1]) {
+    total += Number(minutos[1]) * 60_000
+    encontro = true
+  }
+  if (segundos?.[1]) {
+    total += Number(segundos[1]) * 1000
+    encontro = true
+  }
+  if (milis?.[1]) {
+    total += Number(milis[1])
+    encontro = true
+  }
+  return encontro ? Math.ceil(total) : null
+}
+
+function esperar(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function haciaOpenAi(message: LlmMessage): Record<string, unknown> {
