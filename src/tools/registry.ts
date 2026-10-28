@@ -1,7 +1,7 @@
 import { z } from "zod"
 import { anexarJsonl } from "../control"
-import { crear, construir_payload, generar_evidencia, leer_paquete, validar } from "./oc"
 import { toolError, type ToolContext } from "../types"
+import { armar_paquete, generar_formulario, leer_solicitud, mapear_campos, simular_envio } from "./proveedor"
 
 type ToolDef = {
   description: string
@@ -10,11 +10,11 @@ type ToolDef = {
 }
 
 const herramientas: Record<string, ToolDef> = {
-  oc_leer_paquete: leer_paquete,
-  oc_validar: validar,
-  oc_construir_payload: construir_payload,
-  oc_generar_evidencia: generar_evidencia,
-  oc_crear: crear,
+  proveedor_leer_solicitud: leer_solicitud,
+  proveedor_mapear_campos: mapear_campos,
+  proveedor_generar_formulario: generar_formulario,
+  proveedor_armar_paquete: armar_paquete,
+  proveedor_simular_envio: simular_envio,
 }
 
 export function listarHerramientas(): { name: string; description: string; parameters: z.ZodTypeAny }[] {
@@ -28,59 +28,60 @@ export function listarHerramientas(): { name: string; description: string; param
 export function resumirHerramienta(name: string, raw: string): string {
   try {
     const body = JSON.parse(raw) as { ok?: boolean; error?: string; data?: Record<string, unknown> }
-    if (!body.ok) return `Error: ${body.error ?? "sin detalle"}`
+    if (!body.ok) return body.error ?? "La herramienta no pudo completar la acción."
     const data = body.data ?? {}
-    if (name === "oc_leer_paquete") {
-      const solicitud = data.solicitud as { solicitud_id?: string } | undefined
-      const faltantes = Array.isArray(data.faltantes) ? data.faltantes.filter(Boolean) : []
-      const id = solicitud?.solicitud_id ?? "de la solicitud"
-      return faltantes.length ? `Leí ${id}. Faltan: ${faltantes.join(", ")}.` : `Leí ${id}. No falta ningún archivo.`
+    if (name === "proveedor_leer_solicitud") {
+      const campos = Array.isArray(data.campos) ? data.campos.length : 0
+      const soportes = Array.isArray(data.soportes) ? data.soportes.length : 0
+      return `${String(data.cliente ?? "")} · ${String(data.pais ?? "")} · ${String(data.formato ?? "")} · ${campos} campos · ${soportes} soportes`
     }
-    if (name === "oc_validar") {
-      const bloqueos = Array.isArray(data.bloqueos) ? data.bloqueos.length : 0
-      const confirmaciones = Array.isArray(data.confirmaciones) ? data.confirmaciones.length : 0
-      const partes = [
-        data.apta ? "El caso está apto." : "El caso no está apto.",
-        bloqueos === 0 ? "Sin bloqueos." : `${bloqueos} ${bloqueos === 1 ? "bloqueo" : "bloqueos"}.`,
-        confirmaciones === 0 ? "Sin confirmaciones." : `${confirmaciones} ${confirmaciones === 1 ? "confirmación" : "confirmaciones"}.`,
-      ]
-      if (data.retroactiva === true) partes.push("Es retroactiva.")
-      return partes.join(" ")
+    if (name === "proveedor_mapear_campos") {
+      return `${contar(data.llenos)} llenos, ${contar(data.faltantes)} faltantes, ${contar(data.requiere_confirmacion)} por confirmar`
     }
-    if (name === "oc_construir_payload") return "La orden quedó armada para revisión."
-    if (name === "oc_generar_evidencia") return "Quedó la evidencia de aprobación."
-    if (name === "oc_crear") {
-      return data.idempotente
-        ? `La OC ${String(data.numero_oc ?? "")} ya existía. No se creó otra.`
-        : `Creé la OC ${String(data.numero_oc ?? "")}.`
+    if (name === "proveedor_generar_formulario") {
+      const aviso = typeof data.aviso === "string" ? ` · ${data.aviso}` : ""
+      return `${String(data.formato ?? "")}${aviso} · ${String(data.ruta ?? "")}`
     }
-    return raw.slice(0, 280)
+    if (name === "proveedor_armar_paquete") {
+      return `listo_para_firma=${String(data.listo_para_firma)} · ${String(data.ruta ?? "")}`
+    }
+    if (name === "proveedor_simular_envio") return String(data.ruta ?? "Envío simulado registrado.")
+    return "Acción completada."
   } catch {
-    return raw.slice(0, 280)
+    return "La herramienta devolvió una respuesta ilegible."
   }
+}
+
+function contar(valor: unknown): number {
+  return Array.isArray(valor) ? valor.length : 0
 }
 
 export async function runTool(name: string, args: unknown, ctx: ToolContext): Promise<string> {
   const tool = herramientas[name]
-  if (!tool) return toolError(`Herramienta desconocida: ${name}.`)
-  const parsed = z.object(tool.args).safeParse(args)
   let body: string
-  if (!parsed.success) {
-    const detalle = parsed.error.issues.map((issue) => `${issue.path.join(".") || "argumento"}: ${issue.message}`).join("; ")
-    body = toolError(`Argumentos inválidos. ${detalle}`)
+  if (!tool) {
+    body = toolError(`Herramienta desconocida: ${name}.`)
   } else {
-    try {
+    const parsed = z.object(tool.args).safeParse(args)
+    if (!parsed.success) {
+      const detalle = parsed.error.issues.map((issue) => `${issue.path.join(".") || "argumento"}: ${issue.message}`).join("; ")
+      body = toolError(`Argumentos inválidos. ${detalle}`)
+    } else {
       body = await tool.execute(parsed.data as never, ctx)
-    } catch (error) {
-      body = toolError(error instanceof Error ? error.message : "La herramienta falló.")
     }
+  }
+  let ok = false
+  try {
+    ok = (JSON.parse(body) as { ok?: boolean }).ok === true
+  } catch {
+    ok = false
   }
   await anexarJsonl(ctx.directory, "out/log.jsonl", {
     ts: new Date().toISOString(),
     sessionId: ctx.sessionId,
-    tool: name,
-    args,
-    result: body.slice(0, 20_000),
+    herramienta: name,
+    ok,
+    resumen: resumirHerramienta(name, body),
   })
   return body
 }

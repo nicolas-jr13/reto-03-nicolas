@@ -1,140 +1,96 @@
-# Solución — agente de órdenes de compra
+# Solución — Registro como proveedor
 
-## 1. Problema
+## 1. Problema en una frase
 
-La analista administrativa digita a mano, por cada factura, una orden de compra que ya llegó armada en un correo. Le duele el tiempo, el error de un centro de costo y la falta de una medida de cuántas órdenes nacen después de la factura.
+El área administrativa transcribe a mano, una y otra vez, datos que ya están en el maestro para registrar a Periferia como proveedor; le duele a la analista, que pierde días entre formularios, soportes y el riesgo de copiar mal un NIT o una cuenta.
 
 ## 2. Arquitectura
 
-El navegador habla con un solo proceso Bun. Ese proceso sirve el chat y corre el ciclo del agente. El ciclo no calcula montos: llama herramientas. Las herramientas leen `fixtures/reto-03/` y escriben `out/`.
-
-```
+```text
 web/index.html
     │  POST /api/chat
     ▼
 src/server.ts
-    │
     ▼
-src/agent/loop.ts ── lee agent/prompt.md y src/knowledge/ordenes-compra.md
+src/agent/loop.ts          estados, historial y tope de iteraciones
     │
-    ├── src/llm/openai.ts     (adaptador; el ciclo no conoce al proveedor)
-    └── src/tools/oc.ts       (única fuente de cifras)
-            ├── src/validate.ts
-            ├── src/payload.ts
-            ├── src/evidence.ts
-            └── src/sap/mock.ts  →  out/sap/ordenes.jsonl
+    ├── agent/prompt.md                    comportamiento
+    ├── src/knowledge/registro-proveedor.md conocimiento del proceso
+    ├── src/llm/factory.ts                 elige el adaptador
+    │     ├── anthropic.ts                 @anthropic-ai/sdk
+    │     └── openai.ts                    endpoint compatible (Groq en las pruebas)
+    └── src/tools/proveedor.ts             única fuente de valores
+            │
+            ├── fixtures/reto-01/          solo lectura
+            └── out/<caso>/                formulario, paquete y bitácora
 ```
 
-El comportamiento vive en `agent/prompt.md`. El criterio de negocio vive en `src/knowledge/ordenes-compra.md` y se ejecuta en `src/validate.ts`. El servidor solo orquesta. `modulo/` reexporta las mismas herramientas y repite el mismo prompt y el mismo conocimiento, con el frontmatter que pide el reto.
+El servidor solo concatena el prompt y el conocimiento, y ejecuta el ciclo. Una regla de negocio se cambia en `src/knowledge/` o en las herramientas, no en el HTTP. El módulo `modulo/` reexporta las mismas herramientas y repite el mismo prompt y el mismo conocimiento.
 
 ## 3. Ciclo del agente
 
-Cada turno recarga el prompt y el conocimiento, anexa el mensaje y llama al adaptador. Si el modelo pide herramientas, el servidor las valida con Zod, las ejecuta y devuelve el JSON al modelo. El tope es `MAX_TOOL_ITERATIONS` (25). Al llegar, el turno responde con lo ya obtenido.
+Cada turno guarda el historial en `out/sessions/<id>.json`, junto con el caso activo y el estado: `inicio`, `solicitud_leida`, `campos_mapeados`, `formulario_generado`, `esperando_confirmacion`, `envio_simulado`.
 
-La confirmación no depende de que el modelo se porte bien. `oc_crear` solo acepta `confirmado: true` si el turno anterior terminó pidiendo confirmación y el mensaje nuevo de la analista es una aceptación (`confirmo`, `sí`, `adelante`). Un "confirmo" dentro del primer mensaje no autoriza la creación. El front muestra un aviso y un botón cuando `needsConfirmation` es verdadero.
+El bucle pide una respuesta al modelo con las cinco herramientas. Si propone llamadas, el servidor valida los argumentos con zod, ejecuta la función y devuelve `{ ok, data }` o `{ ok: false, error }`. Ninguna herramienta lanza hacia el modelo. El tope es `MAX_TOOL_ITERATIONS` (25). Hay otro tope aproximado de tokens por sesión.
 
-Cada llamada queda en el historial y en `out/log.jsonl`. Un error del proveedor se escribe en el chat y la sesión sigue.
+La confirmación humana se exige en dos puntos. Si el mapeo trae `requiere_confirmacion`, o si el paquete ya está armado, el turno termina con una pregunta y el chat lo marca. `proveedor_simular_envio` solo escribe `ENVIO-SIMULADO.md` cuando el argumento `confirmado` es true y el mensaje de ese turno es una confirmación explícita (`envía`, `sí`, `confirmo`). «No envíes» no cuenta. Cada llamada queda en el chat y en `out/log.jsonl`, y también en `out/<caso>/log.jsonl`.
 
-## 4. Modelo
+## 4. Elección del modelo
 
-Proveedor Groq, modelo `qwen/qwen3.8-27b`, por el endpoint compatible con OpenAI (`https://api.groq.com/openai/v1`). El ciclo sigue llamando a `enviar(mensajes, herramientas)`; Groq entra solo con la URL y la clave. Lo elegí porque hay cupo gratuito y este modelo llama herramientas, incluidas varias en el mismo turno.
+Las pruebas de esta entrega corrieron con **Groq**, modelo **`qwen/qwen3.8-27b`**, por el endpoint `https://api.groq.com/openai/v1`. Es la clave que ya estaba en el entorno. `demo.ts` no llama al modelo: valida las reglas con los fixtures.
 
-Un caso de esta demo cabe en el cupo gratuito. El tope de iteraciones y el de tokens de sesión evitan dejar una conversación abierta si más adelante la cuenta pasa a un plan de pago.
+El código también integra `@anthropic-ai/sdk`. Si `ANTHROPIC_API_KEY` tiene valor, el ciclo usa ese adaptador sin cambiar las herramientas. El modelo por defecto de esa vía es `claude-sonnet-4-5`.
 
-## 5. Matriz de controles
+Un caso conversacional hace cuatro llamadas de herramienta y un cierre, del orden de unos pocos miles de tokens. En el cupo gratuito de Groq eso cabe en una sesión. `demo.ts` tiene costo cero.
 
-| Regla | Implementación | Salida en los fixtures |
+## 5. Diseño del portal web
+
+El formato portal no se automatiza en este reto. La herramienta responde `formato no soportado` y escribe `out/<caso>/valores-portal.md` para copiar.
+
+En una fase posterior usaría un navegador controlado (Playwright) solo en un equipo de la analista, no en el servidor compartido. El agente abriría el formulario y propondría cada valor; no guardaría la contraseña. Los límites son CAPTCHA, MFA, cambios de layout y sesiones que vencen. Ante cualquiera de esos, el flujo se detiene y la persona sigue a mano con el listado.
+
+Las credenciales vivirían en el gestor del sistema operativo o las escribiría la analista en el momento, en la ventana del navegador. No entran al repositorio, ni al prompt, ni a los logs, ni a los fixtures. El ingreso de usuario y contraseña, y el clic en Enviar, son siempre humanos. El agente no los ejecuta.
+
+## 6. Decisiones y trade-offs
+
+1. **Umbral de confirmación en 0.85.** El PRD marca 0.80 y la rúbrica de la jornada, 85 %. Quedó 0.85, que también cubre el 0.80. La alternativa era usar solo 0.80 y quedar por debajo de la rúbrica.
+2. **El formulario se recalcula desde el maestro.** Aunque el modelo entregue un mapeo, los valores escritos salen de otra lectura del maestro. La alternativa era confiar en el JSON del modelo; eso permitía un valor inventado.
+3. **Dos adaptadores detrás de una interfaz.** Las pruebas usan Groq porque esa es la clave disponible, y Anthropic queda listo para cambiar de proveedor sin tocar el ciclo. La alternativa era acoplar el bucle a un solo SDK.
+4. **PDF generado, no un AcroForm.** El PRD lo acepta y los fixtures no traen el PDF original del cliente. La alternativa era pedir una plantilla binaria que no venía en el reto.
+
+Dependencias: `zod` para los argumentos, `exceljs` para escribir celdas, `pdf-lib` para el PDF y `@anthropic-ai/sdk` para el adaptador de Anthropic.
+
+## 7. Supuestos
+
+- Los cuatro fixtures cubren la variabilidad que hay que demostrar. No se agregaron casos.
+- La vigencia se compara con la fecha local de la máquina. El 28 de octubre de 2026 la cámara vence el 30 de septiembre de 2026 y los parafiscales el 31 de agosto de 2026, así que ningún caso queda `listo_para_firma`. Un campo faltante no cambia ese estado; un soporte ausente o vencido sí.
+- El identificador extranjero se llena con el NIT colombiano y queda en `requiere_confirmacion`, con la nota «identificador extranjero».
+- El diagnóstico de bugs de la entrega anterior salió de este repositorio: esta sesión solo registra proveedores.
+- No hay enlace público. La defensa puede correr en local.
+
+## 8. Cobertura
+
+| Historia | Estado | Qué falta para producción |
 |---|---|---|
-| RC1 | NIT con tolerancia al dígito de verificación; si no hay NIT, nombre sin tildes ni puntuación. Inactivo también bloquea. | `sol-002` no existe. El inactivo del maestro se prueba en `demo.ts` fuera de los seis casos. |
-| RC2 | Debe existir aprobación, contener "Aprobado" y el remitente estar en el centro. "No aprobado" no cuenta. | `sol-003`: Felipe Vargas no aprueba `CC-2020`. |
-| RC3 | Solo si el remitente sí es aprobador de ese centro y el total supera su tope. | No ocurre en los seis. `demo.ts` lo fuerza con un clon de `sol-001`. |
-| RC4 | La subárea tiene que estar en la lista del centro. Centro desconocido bloquea. | Cubierto con un clon en `demo.ts`. |
-| RC5 | Diferencia absoluta sobre el total de la solicitud, tope 2 %. Sin cotización, confirmación. La OC no copia el valor de la cotización. | `sol-004`: 26.500.000 contra 25.000.000 (6 %). |
-| RC6 | IVA ausente se deriva y se confirma. Código desconocido bloquea. | `sol-006` deriva `C1`. |
-| RC7 | Condición ausente se deriva y solo se informa. | `sol-006` deriva `Z030`. |
-| RC8 | Factura anterior a la solicitud marca `retroactiva` y pide confirmación. | `sol-005`: factura 2026-08-10, solicitud 2026-08-27. |
-| RC9 | Aprobación anterior a la solicitud pide confirmación. | Cubierto con un clon en `demo.ts`. |
-| RC10 | `cantidad × valor_unitario` contra `valor_total`, tolerancia de 1. | Cubierto con un clon en `demo.ts`. |
+| HU-1 Leer la solicitud | Hecho | Correo real y bandeja de recepción. |
+| HU-2 Mapear campos | Hecho | Dueño del maestro y sinónimos nuevos sin editar el glosario a mano. |
+| HU-3 Excel | Hecho | Plantillas con celdas combinadas o varias filas repetibles. |
+| HU-3 PDF | Hecho | Rellenar el PDF original del cliente, si lo hubiera. |
+| HU-3 Portal | Parcial | Solo el diseño y el listado copiable. Falta el navegador asistido de la sección 5. |
+| HU-4 Paquete para firma | Hecho | Firma electrónica y envío real. Hoy el envío es un archivo simulado. |
+| HU-5 Errores | Hecho | Alertas operativas cuando falle el proveedor en un horario de cierre. |
 
-Lo más difícil fue RC5 junto con el payload. En `sol-004` la cotización y el correo del líder no dicen el mismo número: el líder aprueba 25 millones "según la solicitud" y la oferta dice 26,5. La orden se arma con la solicitud. `oc_crear` vuelve a calcular y rechaza el payload si un precio, un centro o un IVA no coinciden. El modelo no puede corregir el monto para que cierre.
+## 9. Uso de IA
 
-## 6. Adaptador SAP real
+Para construir usé Cursor, con el agente Auto: leí el PRD y los fixtures, retiré el diagnóstico de bugs y escribí el ciclo, las herramientas, el chat, `demo.ts` y este documento.
 
-Elegiría OData `API_PURCHASEORDER_PROCESS_SRV` si el sistema es S/4 y la red hasta el API management está permitida. Es la API documentada de órdenes de compra, se prueba con un cliente HTTP y no abre puertos RFC. Si solo hay ECC y BASIS habilita RFC, el plan alterno es `BAPI_PO_CREATE1`. No usaría Integration Suite como primera opción: añade una plataforma antes de saber si la conexión es viable.
+Descarté dos propuestas que no servían al reto. Mantener el análisis de software mezclaba otro proceso en el mismo agente. Dejar que el modelo completara un campo ausente con un valor plausible rompía la regla de no inventar: el valor solo sale de la herramienta.
 
-Mapeo del payload de este reto a la API de proceso de orden:
+Las pruebas deterministas son `bun run demo.ts`, sin modelo. Las pruebas del chat usaron **Groq / `qwen/qwen3.8-27b`**.
 
-| Este reto | Estructura SAP |
-|---|---|
-| `sociedad` | `CompanyCode` |
-| `organizacion_compras` | `PurchasingOrganization` |
-| `proveedor.codigo_sap` | `Supplier` |
-| `moneda` | `DocumentCurrency` |
-| `condiciones_pago` | `PaymentTerms` |
-| `referencia.solicitud_id` | texto de cabecera o campo de referencia, para buscarla después |
-| posición `numero` | `PurchaseOrderItem` (10, 20, 30) |
-| `descripcion` | texto breve, 40 caracteres |
-| `cantidad` / `unidad` | `OrderQuantity` / `PurchaseOrderQuantityUnit` |
-| `precio_unitario` | condición de precio de la posición |
-| `centro_costo` + `subarea` | imputación de la posición |
-| `indicador_iva` | `TaxCode` |
-| evidencia | anexo del business object, con el PDF y el sha256 en un texto |
+## 10. Riesgos
 
-Las credenciales vivirían en el entorno del conector o en un almacén de secretos, en un proceso distinto del agente. El prompt y las herramientas no las ven. El agente seguiría hablando con una interfaz `SapAdapter`.
-
-Idempotencia: antes de crear, consultar por el `solicitud_id` guardado en la referencia. Si SAP ya devolvió número, se responde ese número. Si SAP responde error sin número de documento, no se marca como creada y se puede reintentar. Si responde número y además un aviso, se guarda el número y se detiene: reintentar crearía otra orden. Un error parcial de anexo no borra la orden; queda creada y la evidencia se reintenta aparte.
-
-Plan B, si la conexión no es viable: las mismas herramientas dejan la orden, la trazabilidad y el PDF. Con eso la analista pega la cabecera en SAP o se genera un archivo de carga masiva. El control (bloqueos, confirmaciones y retroactivas) ya quedó hecho antes del pantallazo.
-
-## 7. Lectura para dirección
-
-`sol-005` muestra el desvío que hoy no se mide: la factura es del 10 de agosto y la solicitud del 27. La orden nace para poder radicar un gasto que ya ocurrió. Cada caso así queda con `retroactiva = true` en `out/control.csv`, así que el porcentaje sale de contar filas y no de una muestra manual.
-
-El cambio de proceso que propondría es separar la compra del registro de la factura. La orden se crea cuando el líder aprueba la cotización, y la factura solo se radica si esa orden ya existe. Las retroactivas no se prohíben en esta primera versión: se confirman y se cuentan. Con un mes de medición, dirección puede decidir si el siguiente paso es devolverlas o exigir una justificación distinta.
-
-## 8. Decisiones
-
-1. `oc_crear` recalcula la orden y compara el payload. La alternativa era fiarse del JSON del modelo. La descarté porque el propio riesgo del reto es que el modelo ajuste un monto para que cuadre con la cotización.
-2. Un proceso Bun sirve la API y el HTML. La alternativa era un front con su propio servidor de desarrollo. La descarté porque el arranque pedido es un comando y menos de dos minutos.
-3. El ciclo depende de `enviar(mensajes, herramientas)` y Groq se usa como API compatible. La alternativa era acoplar el bucle al SDK de Groq. La descarté porque cambiar de proveedor no debe reescribir la confirmación ni el tope.
-4. Cuando la cotización y la solicitud difieren, la orden usa la solicitud. La alternativa era tomar la cotización o promediar. La descarté: el líder aprueba la solicitud y el agente no tiene autoridad para cambiar el valor.
-
-## 9. Supuestos
-
-- "Aprobado" se busca como palabra, sin distinguir mayúsculas. "No aprobado" o "rechazado" no cuentan.
-- Un IVA o una condición informados y ausentes del maestro bloquean. El PRD solo detalla el caso en que faltan.
-- Cada solicitud de estos fixtures es una posición. La unidad, que no viene en el Excel, es `UN`.
-- Sociedad y organización de compras son `1000`, como fija el esquema.
-- `confirmado_por` es la cadena `analista`, porque el reto no tiene usuarios.
-- La referencia de cotización es el código de la primera línea del texto (`COT-TS-2026-0451`). Si no hay cotización, va null.
-- El NIT de la cotización trae dígito de verificación y el maestro no. El cruce acepta ese dígito de más.
-- La fuente `correo` y la fuente `aprobacion` nombran documentos de entrada. El PRD lista solicitud, cotización, maestro y derivado; estos dos documentos son del mismo tipo que la cotización.
-- La factura solo es un faltante si el correo la anuncia. En el flujo normal, null no es un error.
-- Una orden retroactiva se mide y se confirma. No se rechaza. Esa política queda fuera del reto.
-- `oc_leer_excel` no se implementó. Los fixtures ya traen la solicitud en JSON.
-
-## 10. Cobertura
-
-| Historia | Estado | Para producción |
-|---|---|---|
-| HU-1 Leer el paquete | Hecho | Llegar desde el buzón real, no desde una carpeta. |
-| HU-2 Validar | Hecho | Consultar maestros en SAP, no en JSON. |
-| HU-3 Payload y trazabilidad | Hecho | Varias posiciones y unidades distintas de `UN`. |
-| HU-4 Evidencia | Hecho (txt y pdf) | Firmar el PDF si auditoría lo exige. |
-| HU-5 Crear, idempotencia y control | Hecho en el mock | El adaptador OData de la sección 6. |
-| HU-6 Errores legibles | Hecho | Los mismos mensajes cuando falle el SAP real. |
-| Lectura de Excel real | No hecho | P1. El contrato ya reserva `oc_leer_excel`. |
-
-## 11. Uso de IA
-
-Usé Cursor para leer el PRD, contrastar los seis fixtures y escribir esta implementación. Revisé las reglas contra los datos: `sol-002` no está en el maestro, `sol-003` lo aprueba un líder de otro centro, `sol-004` difiere 6 %, `sol-005` factura antes de solicitar y `sol-006` no trae IVA ni condición.
-
-Descarté de lo que el asistente podía haber hecho: conectar un SAP real, meter las reglas solo en el prompt, guardar sesiones en una base de datos y tomar el valor de la cotización cuando no cierra con la solicitud. El prompt ordena el diálogo. Las cifras salen de las herramientas.
-
-## 12. Riesgos al salir a producción
-
-- El maestro de archivos se desactualiza. Mitigación: `consultarProveedor` ya está en la interfaz; en producción lee SAP.
-- Un reintento crea dos órdenes. Mitigación: buscar por `solicitud_id` antes de crear, también en el SAP real, y no reintentar si ya hubo número de documento.
-- La analista confirma un texto ambiguo. Mitigación: solo cuenta una aceptación al inicio del mensaje siguiente, y el botón del chat envía `confirmo`.
-- La evidencia en PDF no reemplaza una firma. Mitigación: dejar el sha256 y, si auditoría lo pide, sustituir el generador sin cambiar el ciclo.
-- El modelo se salta una pregunta. Mitigación: `oc_crear` vuelve a validar y no acepta la confirmación que él mismo escriba.
+- El modelo puede afirmar un dato que no está en el mapeo. Mitigación: el prompt lo prohíbe y el archivo se genera solo desde el maestro. En producción conviene un cotejo automático entre la respuesta y la bitácora.
+- Un soporte vencido puede pasar desapercibido si nadie mira el checklist. Mitigación: `listo_para_firma` queda en false y el chat lo dice. En producción, la firma electrónica debería rechazar el paquete en ese estado.
+- El portal con CAPTCHA o MFA no se puede delegar. Mitigación: la persona opera el sitio; el agente solo prepara valores y nunca ve la contraseña.
+- La clave del modelo puede filtrarse si alguien copia `.env` o un log. Mitigación: `.env` está ignorado, `/api/health` no la devuelve y las herramientas no ejecutan comandos. En producción la clave vive en el secreto del servidor, con tope de tokens por sesión.

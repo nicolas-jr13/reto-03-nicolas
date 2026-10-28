@@ -3,102 +3,120 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Órdenes de compra</title>
+  <title>Registro de proveedor</title>
   <style>
-    :root { color-scheme: light; --ink: #1c2430; --muted: #5c6b7a; --line: #d5e0dc; --paper: #f4f7f6; --card: #fff; --accent: #0f6b4c; --accent-ink: #fff; --warn: #8a4b08; --warn-bg: #fff4e5; }
+    :root {
+      color-scheme: light;
+      --ink: #17211e;
+      --muted: #5c6b66;
+      --line: #d5e0da;
+      --paper: #f3f6f4;
+      --card: #fff;
+      --accent: #0d6b4c;
+      --confirm: #8a4b08;
+      --confirm-bg: #fff6ea;
+      --confirm-line: #efd3b0;
+    }
     * { box-sizing: border-box; }
+    html, body { height: 100%; }
     body { margin: 0; font: 16px/1.5 "Segoe UI", sans-serif; color: var(--ink); background: var(--paper); }
-    header, main { width: min(880px, calc(100% - 32px)); margin: 0 auto; }
-    header { padding: 28px 0 8px; }
-    h1 { margin: 0; font-size: 28px; letter-spacing: -0.03em; }
-    header p { margin: 6px 0 0; color: var(--muted); }
-    .status { margin-top: 10px; font-size: 14px; color: var(--muted); }
-    .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
-    button, textarea { font: inherit; }
-    .chip, .primary, .ghost { border-radius: 999px; border: 1px solid var(--line); background: var(--card); padding: 8px 14px; cursor: pointer; }
-    .primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
-    .chip:hover, .ghost:hover, .primary:hover { filter: brightness(0.97); }
+    button, textarea { font: inherit; color: inherit; }
     button:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-    #log { display: grid; gap: 12px; padding-bottom: 18px; }
-    .bubble { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 12px 14px; }
-    .bubble.user { background: #e7f5ef; }
+    .app { display: grid; grid-template-columns: 320px minmax(0, 1fr); height: 100%; }
+    aside { padding: 28px 20px; border-right: 1px solid var(--line); background: #f7faf8; overflow: auto; }
+    .eyebrow { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+    h1 { margin: 6px 0 0; font-size: 28px; letter-spacing: -0.03em; line-height: 1.15; }
+    .lede, .status { color: var(--muted); }
+    .lede { margin: 10px 0 0; font-size: 14px; }
+    .casos { display: grid; gap: 8px; margin-top: 22px; }
+    .casos h2, .composer label { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+    .caso, .ghost, .primary { border-radius: 999px; cursor: pointer; }
+    .caso, .ghost { text-align: left; border: 1px solid var(--line); background: var(--card); }
+    .caso { padding: 8px 12px; }
+    .ghost { width: 100%; margin-top: 16px; padding: 8px 14px; }
+    .primary { border: 0; background: var(--accent); color: #fff; padding: 10px 16px; }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    .status { margin: 14px 0 0; font-size: 13px; }
+    main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+    #log { flex: 1; overflow: auto; padding: 28px; display: flex; flex-direction: column; gap: 14px; }
+    .empty { margin: auto; max-width: 520px; text-align: center; color: var(--muted); }
+    .empty h2 { margin: 0 0 8px; color: var(--ink); font-size: 22px; }
+    .bubble { max-width: 760px; background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; }
+    .bubble.user { margin-left: auto; background: #e5f6ee; border-color: #c9e6d8; }
+    .bubble.confirmacion { background: var(--confirm-bg); border-color: var(--confirm-line); }
+    .meta { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
     .who { font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
-    .tool { margin-top: 8px; border-left: 3px solid var(--accent); padding: 6px 10px; background: #f3faf7; border-radius: 8px; }
-    .tool b { font-family: Consolas, monospace; }
-    .tool pre { white-space: pre-wrap; margin: 6px 0 0; font-size: 13px; }
+    .badge { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--confirm); background: #f3e2cc; border-radius: 999px; padding: 2px 8px; }
     .content p { margin: 0 0 10px; }
     .content p:last-child { margin-bottom: 0; }
     .content ul { margin: 0 0 10px; padding-left: 1.2rem; }
-    .content li { margin: 4px 0; }
-    .banner { border: 1px solid #efd3a8; background: var(--warn-bg); color: var(--warn); border-radius: 16px; padding: 12px 14px; }
-    form { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; position: sticky; bottom: 0; background: var(--paper); padding: 12px 0 20px; }
-    form label { grid-column: 1 / -1; }
-    textarea { resize: vertical; min-height: 64px; border-radius: 16px; border: 1px solid var(--line); padding: 12px; }
-    .thinking { color: var(--muted); font-style: italic; }
-    .table-wrap { overflow-x: auto; }
-    table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 14px; }
-    th, td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; white-space: normal; overflow-wrap: anywhere; }
-    th { background: #e7f5ef; }
+    .tool { margin-top: 10px; border-left: 3px solid var(--accent); background: #f3faf7; border-radius: 8px; padding: 8px 10px; }
+    .tool b { font-family: Consolas, monospace; }
+    .tool pre { white-space: pre-wrap; margin: 6px 0 0; font-size: 12.5px; }
+    .composer { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; padding: 12px 28px 20px; }
+    .composer label { grid-column: 1 / -1; }
+    textarea { width: 100%; min-height: 72px; resize: vertical; border: 1px solid var(--line); border-radius: 16px; padding: 10px 12px; background: #fff; }
+    .thinking { margin: 0; color: var(--muted); font-style: italic; }
+    .confirmar { align-self: center; margin: 0 28px 8px; }
+    @media (max-width: 860px) {
+      .app { display: block; height: auto; }
+      aside { border-right: 0; border-bottom: 1px solid var(--line); }
+      #log { overflow: visible; }
+      .bubble.user { margin-left: 0; }
+    }
   </style>
 </head>
 <body>
-  <header>
-    <h1>Órdenes de compra</h1>
-    <p>La analista pide procesar un caso. El agente lee, valida y solo crea la OC si no hay bloqueos ni confirmaciones pendientes.</p>
-    <div class="status" id="health">Consultando el servidor…</div>
-    <div class="chips">
-      <button class="chip" type="button" data-prompt="Procesa la solicitud &quot;sol-001&quot;.">sol-001</button>
-      <button class="chip" type="button" data-prompt="Procesa la solicitud &quot;sol-004&quot;. Muéstrame la OC como quedaría en SAP, qué validaciones pasó y cuáles no, y no la crees hasta que yo lo confirme.">sol-004</button>
-      <button class="chip" type="button" data-prompt="Procesa la solicitud &quot;sol-005&quot;.">sol-005</button>
+  <div class="app">
+    <aside>
+      <p class="eyebrow">Reto 01</p>
+      <h1>Registro de proveedor</h1>
+      <p class="lede">El agente llena el formulario desde el maestro y deja el paquete listo. No firma ni envía.</p>
+      <div class="casos">
+        <h2>Casos</h2>
+        <button class="caso" type="button" data-caso="co-industrias-delta">co-industrias-delta</button>
+        <button class="caso" type="button" data-caso="ec-corp-andina">ec-corp-andina</button>
+        <button class="caso" type="button" data-caso="hn-agroexport-sula">hn-agroexport-sula</button>
+        <button class="caso" type="button" data-caso="pa-logistica-istmo">pa-logistica-istmo</button>
+      </div>
       <button class="ghost" type="button" id="nueva">Nueva sesión</button>
-    </div>
-  </header>
-  <main>
-    <div id="log" aria-live="polite"></div>
-    <div id="banner" class="banner" hidden>
-      <strong>Hace falta confirmación.</strong>
-      <p>El agente no va a crear la orden hasta que usted lo acepte.</p>
-      <button class="primary" type="button" id="confirmar">Confirmar creación</button>
-    </div>
-    <form id="form">
-      <label for="mensaje" class="who">Mensaje</label>
-      <textarea id="mensaje" name="mensaje" placeholder="Procesa la solicitud sol-001" required></textarea>
-      <button class="primary" id="enviar" type="submit">Enviar</button>
-    </form>
-  </main>
+      <p class="status" id="health">Consultando el servidor…</p>
+    </aside>
+    <main>
+      <div id="log" aria-live="polite">
+        <div class="empty" id="empty">
+          <h2>Elige un caso</h2>
+          <p>Pide procesar una solicitud. Verás cada herramienta y, si hace falta, la confirmación humana.</p>
+        </div>
+      </div>
+      <form class="composer" id="form">
+        <label for="mensaje">Mensaje para la analista</label>
+        <textarea id="mensaje" name="mensaje" placeholder="Procesa el caso…" required></textarea>
+        <button class="primary" id="enviar" type="submit">Enviar</button>
+      </form>
+    </main>
+  </div>
   <script>
     const log = document.querySelector("#log")
-    const banner = document.querySelector("#banner")
     const form = document.querySelector("#form")
     const mensaje = document.querySelector("#mensaje")
     const enviar = document.querySelector("#enviar")
     const health = document.querySelector("#health")
-    let sessionId = localStorage.getItem("oc-session") || crypto.randomUUID()
-    localStorage.setItem("oc-session", sessionId)
+    let sessionId = localStorage.getItem("proveedor-session") || crypto.randomUUID()
+    localStorage.setItem("proveedor-session", sessionId)
 
     const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]))
     const inline = (value) => escapeHtml(value).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-    const esTabla = (lines, index) => lines[index].includes("|") && lines[index + 1] && /^\s*\|?\s*:?-{3,}/.test(lines[index + 1])
-    const esLista = (line) => /^\s*[-*]\s+/.test(line)
 
     function renderText(value) {
-      const lines = String(value).replace(/\r\n/g, "\n").split("\n")
+      const lines = String(value || "").replace(/\r\n/g, "\n").split("\n")
       let html = ""
       let i = 0
       while (i < lines.length) {
         if (!lines[i].trim()) { i += 1; continue }
-        if (esTabla(lines, i)) {
-          const rows = []
-          while (i < lines.length && lines[i].includes("|")) {
-            if (!/^\s*\|?\s*:?-{3,}/.test(lines[i])) rows.push(lines[i].split("|").map((cell) => cell.trim()).filter((cell, index, all) => cell !== "" || (index > 0 && index < all.length - 1)))
-            i += 1
-          }
-          html += `<div class="table-wrap"><table>${rows.map((row, index) => `<tr>${row.map((cell) => index === 0 ? `<th>${inline(cell)}</th>` : `<td>${inline(cell)}</td>`).join("")}</tr>`).join("")}</table></div>`
-          continue
-        }
-        if (esLista(lines[i])) {
+        if (/^\s*[-*]\s+/.test(lines[i])) {
           const items = []
-          while (i < lines.length && esLista(lines[i])) {
+          while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
             items.push(lines[i].replace(/^\s*[-*]\s+/, ""))
             i += 1
           }
@@ -106,7 +124,7 @@
           continue
         }
         const paragraph = []
-        while (i < lines.length && lines[i].trim() && !esTabla(lines, i) && !esLista(lines[i])) {
+        while (i < lines.length && lines[i].trim() && !/^\s*[-*]\s+/.test(lines[i])) {
           paragraph.push(lines[i])
           i += 1
         }
@@ -115,12 +133,16 @@
       return html
     }
 
-    function addBubble(role, text, tools = []) {
+    function addBubble(role, text, tools = [], needsConfirmation = false) {
+      document.querySelector("#empty")?.remove()
       const node = document.createElement("article")
-      node.className = `bubble ${role}`
-      const who = role === "user" ? "Analista" : "Agente"
-      const toolsHtml = tools.map((tool) => `<div class="tool"><b>${escapeHtml(tool.name)}</b><div>${escapeHtml(tool.summary || "")}</div><details><summary>Argumentos y resultado</summary><pre>${escapeHtml(JSON.stringify(tool.arguments, null, 2) || "")}</pre><pre>${escapeHtml(tool.result || "")}</pre></details></div>`).join("")
-      node.innerHTML = `<div class="who">${who}</div><div class="content">${renderText(text || "")}</div>${toolsHtml}`
+      node.className = `bubble ${role}${needsConfirmation ? " confirmacion" : ""}`
+      const badge = needsConfirmation ? `<span class="badge">Confirmación humana</span>` : ""
+      const toolsHtml = tools.map((tool) => {
+        const args = typeof tool.arguments === "string" ? tool.arguments : JSON.stringify(tool.arguments ?? {}, null, 2)
+        return `<div class="tool"><b>${escapeHtml(tool.name)}</b><div>${escapeHtml(tool.summary || "")}</div><details><summary>Argumentos y resultado</summary><pre>${escapeHtml(args)}</pre><pre>${escapeHtml(tool.result || "")}</pre></details></div>`
+      }).join("")
+      node.innerHTML = `<div class="meta"><div class="who">${role === "user" ? "Analista" : "Agente"}</div>${badge}</div><div class="content">${renderText(text)}</div>${toolsHtml}`
       log.append(node)
       node.scrollIntoView({ block: "nearest" })
     }
@@ -128,25 +150,22 @@
     function setBusy(busy) {
       enviar.disabled = busy
       mensaje.disabled = busy
-      let note = document.querySelector(".thinking")
+      document.querySelectorAll(".caso, #nueva").forEach((node) => { node.disabled = busy })
+      const note = document.querySelector(".thinking")
       if (busy && !note) {
-        note = document.createElement("p")
-        note.className = "thinking"
-        note.textContent = "Pensando…"
-        log.append(note)
+        document.querySelector("#empty")?.remove()
+        const thinking = document.createElement("p")
+        thinking.className = "thinking"
+        thinking.textContent = "Pensando…"
+        log.append(thinking)
       }
       if (!busy && note) note.remove()
-    }
-
-    function setConfirmation(needed) {
-      banner.hidden = !needed
     }
 
     async function send(text) {
       addBubble("user", text)
       mensaje.value = ""
       setBusy(true)
-      setConfirmation(false)
       try {
         const response = await fetch("/api/chat", {
           method: "POST",
@@ -155,8 +174,8 @@
         })
         const data = await response.json()
         if (!response.ok) throw new Error(data.error || "No pude enviar el mensaje.")
-        addBubble("assistant", data.reply || "", data.toolCalls || [])
-        setConfirmation(data.needsConfirmation === true)
+        addBubble("assistant", data.reply || "", data.toolCalls || [], Boolean(data.needsConfirmation))
+        if (data.needsConfirmation && /responde «envía»|envío simulado/i.test(data.reply || "")) mostrarConfirmacion()
       } catch (error) {
         addBubble("assistant", error instanceof Error ? error.message : "Error de red. La sesión sigue activa.")
       } finally {
@@ -165,43 +184,64 @@
       }
     }
 
+    function mostrarConfirmacion() {
+      if (document.querySelector(".confirmar")) return
+      const button = document.createElement("button")
+      button.className = "primary confirmar"
+      button.type = "button"
+      button.textContent = "Confirmar envío simulado"
+      button.addEventListener("click", () => {
+        button.remove()
+        send("envía")
+      })
+      form.before(button)
+    }
+
     form.addEventListener("submit", (event) => {
       event.preventDefault()
       const text = mensaje.value.trim()
       if (text) send(text)
     })
-    document.querySelector("#confirmar").addEventListener("click", () => send("confirmo"))
+
+    document.querySelectorAll(".caso").forEach((button) => {
+      button.addEventListener("click", () => {
+        const caso = button.dataset.caso
+        mensaje.value = `Procesa el caso "${caso}". Dime qué campos quedaron llenos, cuáles faltan, si el paquete está listo para firma y qué soportes debo actualizar. No envíes nada todavía.`
+        mensaje.focus()
+      })
+    })
+
     document.querySelector("#nueva").addEventListener("click", () => {
       sessionId = crypto.randomUUID()
-      localStorage.setItem("oc-session", sessionId)
+      localStorage.setItem("proveedor-session", sessionId)
+      document.querySelector(".confirmar")?.remove()
       log.replaceChildren()
-      setConfirmation(false)
+      const empty = document.createElement("div")
+      empty.className = "empty"
+      empty.id = "empty"
+      empty.innerHTML = "<h2>Sesión nueva</h2><p>Elige un caso y pide procesarlo.</p>"
+      log.append(empty)
     })
-    for (const chip of document.querySelectorAll("[data-prompt]")) {
-      chip.addEventListener("click", () => { mensaje.value = chip.getAttribute("data-prompt"); mensaje.focus() })
-    }
+
     fetch("/api/health").then((response) => response.json()).then((data) => {
-      health.textContent = data.ok ? `Servidor activo. Modelo: ${data.provider} / ${data.model}.` : "El servidor no respondió el chequeo."
+      health.textContent = data.ok ? `Servidor activo. Modelo: ${data.provider} / ${data.model}.` : "El servidor no respondió."
     }).catch(() => { health.textContent = "No pude leer /api/health." })
+
     fetch(`/api/sessions/${sessionId}`).then((response) => response.json()).then((data) => {
-      let pendingTools = []
+      let pending = []
       for (const message of data.messages || []) {
+        if (message.role === "system") continue
         if (message.role === "user") addBubble("user", message.content)
         if (message.role === "assistant" && message.toolCalls?.length) {
-          pendingTools = message.toolCalls.map((call) => ({ name: call.name, arguments: call.arguments, summary: "Llamada registrada en la sesión.", result: "" }))
-          if (message.content) {
-            addBubble("assistant", message.content, pendingTools)
-            pendingTools = []
-          }
+          pending = message.toolCalls.map((call) => ({ name: call.name, arguments: call.arguments, summary: "Llamada registrada en la sesión.", result: "" }))
         } else if (message.role === "tool") {
-          const slot = pendingTools.find((tool) => !tool.result)
+          const slot = pending.find((tool) => !tool.result)
           if (slot) slot.result = message.content
-        } else if (message.role === "assistant" && message.content) {
-          addBubble("assistant", message.content, pendingTools)
-          pendingTools = []
+        } else if (message.role === "assistant") {
+          addBubble("assistant", message.content, pending, data.estado === "esperando_confirmacion")
+          pending = []
         }
       }
-      setConfirmation(data.pendingConfirmation === true)
     }).catch(() => {})
   </script>
 </body>

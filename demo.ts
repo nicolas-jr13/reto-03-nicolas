@@ -1,25 +1,39 @@
-import { existsSync, readFileSync, rmSync, statSync } from "node:fs"
+import { createHash } from "node:crypto"
+import { readdirSync, readFileSync, rmSync, statSync } from "node:fs"
 import path from "node:path"
-import { leerMaestros, leerPaquete } from "./src/fixtures"
-import { runTool } from "./src/tools/registry"
-import type { OrdenCompra, ToolContext, Validacion } from "./src/types"
-import { validarPaquete } from "./src/validate"
+import ExcelJS from "exceljs"
+import { zodToJsonSchema } from "./src/llm/json-schema"
+import { listarHerramientas, runTool } from "./src/tools/registry"
+import { fechaLocal, interpretarJson, listarCasos } from "./src/tools/proveedor"
+import type { CampoMapeado, ItemChecklist } from "./src/tools/proveedor"
+import type { ToolContext } from "./src/types"
 
 const directory = import.meta.dir
 
 type ToolBody<T> = { ok: true; data: T } | { ok: false; error: string }
 
-type PaqueteData = Awaited<ReturnType<typeof leerPaquete>>
-type PayloadData = { orden: OrdenCompra; trazabilidad: string; evidencia: { sha256: string; ruta: string; ruta_pdf: string } }
-type CrearData = { numero_oc: string; fecha: string; idempotente: boolean; retroactiva?: boolean }
+type Lectura = {
+  pais: string
+  cliente: string
+  formato: string
+  campos: string[]
+  soportes: string[]
+}
 
-const esperados: Record<string, { apta: boolean; bloqueos: string[]; confirmaciones: string[]; retroactiva: boolean }> = {
-  "sol-001": { apta: true, bloqueos: [], confirmaciones: [], retroactiva: false },
-  "sol-002": { apta: false, bloqueos: ["RC1"], confirmaciones: [], retroactiva: false },
-  "sol-003": { apta: false, bloqueos: ["RC2"], confirmaciones: [], retroactiva: false },
-  "sol-004": { apta: true, bloqueos: [], confirmaciones: ["RC5"], retroactiva: false },
-  "sol-005": { apta: true, bloqueos: [], confirmaciones: ["RC8"], retroactiva: true },
-  "sol-006": { apta: true, bloqueos: [], confirmaciones: ["RC6"], retroactiva: false },
+type Mapeo = {
+  llenos: CampoMapeado[]
+  faltantes: CampoMapeado[]
+  requiere_confirmacion: CampoMapeado[]
+}
+
+type Formulario = { ruta: string; formato: string; aviso?: string }
+
+type Paquete = {
+  ruta: string
+  listo_para_firma: boolean
+  checklist: ItemChecklist[]
+  bloqueos: string[]
+  faltantes: string[]
 }
 
 function parse<T>(raw: string): ToolBody<T> {
@@ -32,164 +46,158 @@ function exigirOk<T>(raw: string, etiqueta: string): T {
   return body.data
 }
 
-function exigirError(raw: string, etiqueta: string): string {
-  const body = parse<unknown>(raw)
-  if (body.ok) throw new Error(`${etiqueta}: se esperaba rechazo y la herramienta creó o devolvió datos.`)
-  return body.error
+function huella(dir: string): string {
+  const hash = createHash("sha256")
+  const archivos: string[] = []
+  const recorrer = (actual: string) => {
+    for (const nombre of readdirSync(actual).sort()) {
+      const absoluto = path.join(actual, nombre)
+      if (statSync(absoluto).isDirectory()) recorrer(absoluto)
+      else archivos.push(absoluto)
+    }
+  }
+  recorrer(dir)
+  for (const archivo of archivos) {
+    hash.update(path.relative(dir, archivo).replaceAll("\\", "/"))
+    hash.update(readFileSync(archivo))
+  }
+  return hash.digest("hex")
 }
 
-function mismos(etiqueta: string, esperado: string[], items: { codigo: string }[]): void {
-  const got = items.map((item) => item.codigo).sort().join(",")
-  const want = [...esperado].sort().join(",")
-  if (got !== want) throw new Error(`${etiqueta}: se esperaba [${want}] y llegó [${got}].`)
-}
-
-function imprimir(validacion: Validacion): void {
-  const bloqueos = validacion.bloqueos.map((item) => `${item.codigo} ${item.detalle}`).join(" || ") || "—"
-  const confirmaciones = validacion.confirmaciones.map((item) => `${item.codigo} ${item.detalle}`).join(" || ") || "—"
-  console.log(`  apta: ${validacion.apta}`)
-  console.log(`  bloqueos: ${bloqueos}`)
-  console.log(`  confirmaciones: ${confirmaciones}`)
-  console.log(`  retroactiva: ${validacion.retroactiva}`)
-}
-
-async function leerYValidar(caso: string, ctx: ToolContext): Promise<{ paquete: PaqueteData; validacion: Validacion }> {
-  const paquete = exigirOk<PaqueteData>(await runTool("oc_leer_paquete", { caso }, ctx), `${caso} leer`)
-  const validacion = exigirOk<Validacion>(await runTool("oc_validar", { caso, paquete }, ctx), `${caso} validar`)
-  const esperado = esperados[caso]
-  if (!esperado) throw new Error(`Caso sin expectativa: ${caso}`)
-  if (validacion.apta !== esperado.apta) throw new Error(`${caso}: apta debía ser ${esperado.apta}.`)
-  mismos(`${caso} bloqueos`, esperado.bloqueos, validacion.bloqueos)
-  mismos(`${caso} confirmaciones`, esperado.confirmaciones, validacion.confirmaciones)
-  if (validacion.retroactiva !== esperado.retroactiva) throw new Error(`${caso}: retroactiva debía ser ${esperado.retroactiva}.`)
-  return { paquete, validacion }
+function cuerpoDe(archivo: string): string {
+  const raw = readFileSync(archivo, "utf8")
+  return raw.replace(/^---[\s\S]*?---\s*/, "").trim()
 }
 
 async function main(): Promise<void> {
+  const fixtures = path.join(directory, "fixtures")
+  const antes = huella(fixtures)
   rmSync(path.join(directory, "out"), { recursive: true, force: true })
-  const base: ToolContext = { directory, sessionId: "demo", confirmedByUser: false }
-  console.log("demo.ts — seis casos, sin modelo\n")
 
-  console.log("sol-001")
-  const primero = await leerYValidar("sol-001", base)
-  const evidencia = exigirOk<{ sha256: string; ruta: string; ruta_pdf: string }>(
-    await runTool("oc_generar_evidencia", { caso: "sol-001" }, base),
-    "sol-001 evidencia",
-  )
-  if (!/^[a-f0-9]{64}$/.test(evidencia.sha256)) throw new Error("sha256 inválido.")
-  const construido = exigirOk<PayloadData>(
-    await runTool("oc_construir_payload", { caso: "sol-001", paquete: primero.paquete, derivados: primero.validacion.derivados }, base),
-    "sol-001 payload",
-  )
-  if ((construido.orden.posiciones[0]?.descripcion.length ?? 0) > 40) throw new Error("La descripción supera 40 caracteres.")
-  if (construido.orden.referencia.cotizacion_ref !== "COT-TS-2026-0451") {
-    throw new Error(`Referencia de cotización inesperada: ${construido.orden.referencia.cotizacion_ref}`)
+  const prompt = readFileSync(path.join(directory, "agent", "prompt.md"), "utf8").trim()
+  const conocimiento = readFileSync(path.join(directory, "src", "knowledge", "registro-proveedor.md"), "utf8").trim()
+  if (cuerpoDe(path.join(directory, "modulo", "agent.md")) !== prompt) {
+    throw new Error("modulo/agent.md no coincide con agent/prompt.md.")
   }
-  const creada = exigirOk<CrearData>(
-    await runTool("oc_crear", { caso: "sol-001", payload: construido.orden, confirmado: false }, base),
-    "sol-001 crear",
-  )
-  if (creada.numero_oc !== "4500000001" || creada.idempotente) throw new Error(`OC inicial inesperada: ${creada.numero_oc}`)
-  console.log(`  oc: ${creada.numero_oc}`)
-  imprimir(primero.validacion)
-
-  console.log("\nsol-001 (segunda vez, idempotencia)")
-  const repetida = exigirOk<CrearData>(
-    await runTool("oc_crear", { caso: "sol-001", payload: construido.orden, confirmado: false }, base),
-    "sol-001 idempotente",
-  )
-  if (!repetida.idempotente || repetida.numero_oc !== creada.numero_oc) {
-    throw new Error("La segunda ejecución de sol-001 creó otra OC.")
+  if (cuerpoDe(path.join(directory, "modulo", "skill", "registro-proveedor", "SKILL.md")) !== conocimiento) {
+    throw new Error("La skill del módulo no coincide con el conocimiento del agente.")
   }
-  console.log(`  oc: ${repetida.numero_oc}`)
-  console.log("  idempotente: true")
+  const esquema = zodToJsonSchema(listarHerramientas().find((tool) => tool.name === "proveedor_mapear_campos")!.parameters)
+  if (esquema.type !== "object" || !esquema.properties) throw new Error("El esquema de mapear_campos no quedó como objeto.")
 
-  for (const caso of ["sol-002", "sol-003"] as const) {
-    console.log(`\n${caso}`)
-    const resultado = await leerYValidar(caso, base)
-    imprimir(resultado.validacion)
-    const error = exigirError(await runTool("oc_crear", { caso, payload: { intento: true } }, base), `${caso} crear`)
-    console.log(`  oc: no creada`)
-    console.log(`  motivo: ${error}`)
-  }
+  const corrupto = interpretarJson("{")
+  if (corrupto.ok || /at\s+\w+/.test(corrupto.error)) throw new Error("Un JSON corrupto debía fallar con un mensaje claro.")
 
-  const numeros: Record<string, string> = { "sol-001": creada.numero_oc }
-  for (const caso of ["sol-004", "sol-005", "sol-006"] as const) {
-    console.log(`\n${caso}`)
-    const resultado = await leerYValidar(caso, base)
-    imprimir(resultado.validacion)
-    const payload = exigirOk<PayloadData>(
-      await runTool("oc_construir_payload", { caso, paquete: resultado.paquete, derivados: resultado.validacion.derivados }, base),
-      `${caso} payload`,
+  const ctx: ToolContext = { directory, sessionId: "demo", confirmacionExplicita: false }
+  const ctxOk: ToolContext = { directory, sessionId: "demo", confirmacionExplicita: true }
+  const invalido = parse<unknown>(await runTool("proveedor_leer_solicitud", { caso: "../maestro" }, ctx))
+  if (invalido.ok) throw new Error("Un caso con ruta relativa no debía leerse.")
+  const ausente = parse<unknown>(await runTool("proveedor_leer_solicitud", { caso: "no-existe" }, ctx))
+  if (ausente.ok || !ausente.error.includes("No existe")) throw new Error("Un caso ausente debía avisar sin traza.")
+
+  const hoy = fechaLocal()
+  for (const caso of await listarCasos(directory)) {
+    const lectura = exigirOk<Lectura>(await runTool("proveedor_leer_solicitud", { caso }, ctx), caso)
+    const mapeo = exigirOk<Mapeo>(await runTool("proveedor_mapear_campos", { caso, campos: lectura.campos }, ctx), caso)
+    const formulario = exigirOk<Formulario>(
+      await runTool("proveedor_generar_formulario", { caso, mapeo }, ctx),
+      caso,
     )
-    const pendiente = exigirError(
-      await runTool("oc_crear", { caso, payload: payload.orden, confirmado: false }, base),
-      `${caso} sin confirmar`,
+    const paquete = exigirOk<Paquete>(await runTool("proveedor_armar_paquete", { caso }, ctx), caso)
+    await revisarCaso(caso, lectura, mapeo, formulario, paquete, hoy)
+    console.log(
+      `${caso} | ${lectura.formato} | llenos ${mapeo.llenos.length} | faltantes ${mapeo.faltantes.length} | confirmar ${mapeo.requiere_confirmacion.length} | listo_para_firma ${paquete.listo_para_firma}`,
     )
-    console.log(`  sin confirmación: ${pendiente}`)
-    const confirmada = exigirOk<CrearData>(
-      await runTool("oc_crear", { caso, payload: payload.orden, confirmado: true }, { ...base, confirmedByUser: true }),
-      `${caso} confirmada`,
-    )
-    if (confirmada.idempotente) throw new Error(`${caso} no debía ser idempotente en la primera creación.`)
-    numeros[caso] = confirmada.numero_oc
-    console.log(`  confirmación explícita: sí`)
-    console.log(`  oc: ${confirmada.numero_oc}`)
-    if (caso === "sol-005" && confirmada.retroactiva !== true) throw new Error("sol-005 debía quedar retroactiva.")
-    if (caso === "sol-006") {
-      if (resultado.validacion.derivados.indicador_iva !== "C1" || resultado.validacion.derivados.condiciones_pago !== "Z030") {
-        throw new Error("sol-006 no derivó IVA C1 y condición Z030.")
-      }
-      console.log("  derivados: IVA C1, condición Z030")
-    }
   }
 
-  const ordenes = readFileSync(path.join(directory, "out", "sap", "ordenes.jsonl"), "utf8")
-    .trim()
-    .split("\n")
-    .map((linea) => JSON.parse(linea) as { numero_oc: string; solicitud_id: string })
-  if (ordenes.length !== 4) throw new Error(`Se esperaban 4 OC y hay ${ordenes.length}.`)
-  const control = readFileSync(path.join(directory, "out", "control.csv"), "utf8")
-  if (!control.includes("SOL-2026-005") || !control.includes("true")) throw new Error("El log de control no marca la OC retroactiva.")
-  const txt = path.join(directory, "out", "sol-001", "aprobacion.txt")
-  const pdf = path.join(directory, "out", "sol-001", "aprobacion.pdf")
-  if (!existsSync(txt) || !readFileSync(txt, "utf8").includes("sha256:")) throw new Error("Falta la evidencia txt.")
-  if (!existsSync(pdf) || statSync(pdf).size < 200) throw new Error("Falta la evidencia pdf.")
-
-  await comprobarReglasFueraDeFixture()
-  console.log("\nResultado: los seis casos cumplen O1–O4.")
-  console.log(`OC creadas: ${ordenes.map((fila) => `${fila.solicitud_id}=${fila.numero_oc}`).join(", ")}`)
+  const bloqueado = parse<unknown>(await runTool("proveedor_simular_envio", { caso: "co-industrias-delta", confirmado: false }, ctx))
+  if (bloqueado.ok || bloqueado.error !== "requiere confirmación explícita") {
+    throw new Error("El envío sin confirmación debía rechazarse.")
+  }
+  const simulado = exigirOk<{ ruta: string }>(
+    await runTool("proveedor_simular_envio", { caso: "co-industrias-delta", confirmado: true }, ctxOk),
+    "envio",
+  )
+  if (!readFileSync(path.join(directory, simulado.ruta), "utf8").includes("Envío simulado")) {
+    throw new Error("No quedó el archivo de envío simulado.")
+  }
+  if (huella(fixtures) !== antes) throw new Error("Los fixtures cambiaron durante la demo.")
+  console.log("[PASS] Validación completada.")
 }
 
-async function comprobarReglasFueraDeFixture(): Promise<void> {
-  const paquete = await leerPaquete(directory, "sol-001")
-  const maestros = await leerMaestros(directory)
-  const subarea = structuredClone(paquete)
-  subarea.solicitud.subarea = "Marketing"
-  if (!validarPaquete(subarea, maestros).bloqueos.some((item) => item.codigo === "RC4")) throw new Error("RC4 no bloqueó la subárea.")
+async function revisarCaso(
+  caso: string,
+  lectura: Lectura,
+  mapeo: Mapeo,
+  formulario: Formulario,
+  paquete: Paquete,
+  hoy: string,
+): void {
+  const etiquetas = new Set([...mapeo.llenos, ...mapeo.faltantes, ...mapeo.requiere_confirmacion].map((campo) => campo.etiqueta))
+  if (etiquetas.size !== lectura.campos.length) throw new Error(`${caso}: un campo quedó sin estado o duplicado.`)
+  if (mapeo.faltantes.some((campo) => campo.valor !== undefined)) throw new Error(`${caso}: un faltante trae un valor inventado.`)
+  const bloqueaPorFaltante = paquete.bloqueos.some((item) => item.startsWith("faltante"))
+  if (bloqueaPorFaltante) throw new Error(`${caso}: un campo faltante no debe bloquear la firma.`)
+  const esperado = paquete.bloqueos.length === 0
+  if (paquete.listo_para_firma !== esperado) throw new Error(`${caso}: listo_para_firma no coincide con los bloqueos.`)
+  const correo = readFileSync(path.join(directory, "out", caso, "paquete", "borrador-correo.md"), "utf8")
+  if (/03100012345|COLOCOBM|Bancolombia/.test(correo)) throw new Error(`${caso}: el borrador incluye datos bancarios.`)
+  const checklist = readFileSync(path.join(directory, "out", caso, "paquete", "checklist.md"), "utf8")
+  if (!checklist.includes(hoy)) throw new Error(`${caso}: el checklist no trae la fecha de ejecución.`)
 
-  const cuadre = structuredClone(paquete)
-  cuadre.solicitud.valor_total = 10
-  if (!validarPaquete(cuadre, maestros).bloqueos.some((item) => item.codigo === "RC10")) throw new Error("RC10 no bloqueó el descuadre.")
-
-  const tope = structuredClone(paquete)
-  tope.solicitud.cantidad = 1
-  tope.solicitud.valor_unitario = 60_000_000
-  tope.solicitud.valor_total = 60_000_000
-  if (!validarPaquete(tope, maestros).bloqueos.some((item) => item.codigo === "RC3")) throw new Error("RC3 no bloqueó el tope.")
-
-  const fecha = structuredClone(paquete)
-  if (!fecha.aprobacion) throw new Error("sol-001 no tiene aprobación.")
-  fecha.aprobacion.fecha = "2026-08-01"
-  const validacionFecha = validarPaquete(fecha, maestros)
-  if (!validacionFecha.apta || !validacionFecha.confirmaciones.some((item) => item.codigo === "RC9")) {
-    throw new Error("RC9 no pidió confirmación.")
+  if (caso === "co-industrias-delta") {
+    if (mapeo.faltantes.length || mapeo.requiere_confirmacion.length) throw new Error("Colombia debía llenarse desde el maestro.")
+    if (formulario.formato !== "xlsx") throw new Error("Industrias Delta debía salir en Excel.")
   }
+  if (caso === "ec-corp-andina" || caso === "pa-logistica-istmo") {
+    const ruc = mapeo.requiere_confirmacion.find((campo) => campo.etiqueta === "RUC")
+    if (!ruc || ruc.valor !== "900123456" || !ruc.nota?.includes("identificador extranjero")) {
+      throw new Error(`${caso}: el RUC debía proponer el NIT y pedir confirmación.`)
+    }
+  }
+  if (caso === "ec-corp-andina") {
+    if (!mapeo.faltantes.some((campo) => campo.etiqueta === "Número de contribuyente especial")) {
+      throw new Error("El contribuyente especial debía quedar faltante.")
+    }
+    if (!paquete.bloqueos.includes("certificado_cumplimiento_tributario ausente")) {
+      throw new Error("El soporte tributario ausente debía bloquear la firma.")
+    }
+    if (formulario.formato !== "pdf") throw new Error("Corp Andina debía salir en PDF.")
+  }
+  if (caso === "hn-agroexport-sula") {
+    const rtn = mapeo.requiere_confirmacion.find((campo) => campo.etiqueta === "RTN")
+    if (!rtn || rtn.valor !== "900123456" || !rtn.nota?.includes("identificador extranjero")) {
+      throw new Error("El RTN debía proponer el NIT y pedir confirmación.")
+    }
+    if (!mapeo.faltantes.some((campo) => campo.etiqueta === "Referencias comerciales")) {
+      throw new Error("Las referencias comerciales debían quedar faltantes.")
+    }
+  }
+  if (caso === "pa-logistica-istmo") {
+    if (formulario.aviso !== "formato no soportado") throw new Error("El portal debía declararse no soportado.")
+    const portal = readFileSync(path.join(directory, formulario.ruta), "utf8")
+    if (!portal.includes("formato no soportado") || !portal.includes("900123456")) {
+      throw new Error("El listado del portal no quedó listo para copiar.")
+    }
+  }
+  if (caso === "co-industrias-delta" || caso === "hn-agroexport-sula") await revisarExcel(caso)
+}
 
-  const inactivo = structuredClone(paquete)
-  inactivo.solicitud.proveedor_nit = "901777888"
-  inactivo.solicitud.proveedor_nombre = "Consultores Ágiles S.A.S."
-  if (!validarPaquete(inactivo, maestros).bloqueos.some((item) => item.codigo === "RC1")) throw new Error("RC1 no bloqueó al proveedor inactivo.")
+async function revisarExcel(caso: string): Promise<void> {
+  const libro = new ExcelJS.Workbook()
+  await libro.xlsx.readFile(path.join(directory, "out", caso, "formulario.xlsx"))
+  if (caso === "co-industrias-delta") {
+    const datos = libro.getWorksheet("Datos Proveedor")
+    const banco = libro.getWorksheet("Datos Bancarios")
+    if (datos?.getCell("C3").value !== "Periferia IT Group S.A.S.") throw new Error("La razón social no quedó en C3.")
+    if (datos?.getCell("C4").value !== "900123456") throw new Error("El NIT no quedó en C4.")
+    if (banco?.getCell("C5").value !== "03100012345") throw new Error("La cuenta no quedó en la hoja bancaria.")
+  }
+  if (caso === "hn-agroexport-sula") {
+    const hoja = libro.getWorksheet("Registro")
+    if (hoja?.getCell("B3").value !== "900123456") throw new Error("El RTN propuesto no quedó en B3.")
+    if (hoja?.getCell("B12").value) throw new Error("Las referencias comerciales no debían inventarse.")
+  }
 }
 
 main().catch((error: unknown) => {

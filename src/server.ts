@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { readFile } from "node:fs/promises"
 import path from "node:path"
 import { ejecutarTurno, obtenerSesion } from "./agent/loop"
-import { configuracionModelo } from "./llm/openai"
+import { configuracionModelo } from "./llm/factory"
 
 const directory = path.resolve(import.meta.dir, "..")
 const port = Number(process.env.PORT ?? 3000)
@@ -33,28 +33,21 @@ const server = createServer(async (req, res) => {
   try {
     if (req.method === "GET" && url.pathname === "/api/health") {
       const modelo = configuracionModelo()
-      enviar(res, 200, {
-        ok: true,
-        provider: modelo.provider,
-        model: modelo.model,
-      })
+      enviar(res, 200, { ok: true, provider: modelo.provider, model: modelo.model })
       return
     }
     if (req.method === "GET" && url.pathname.startsWith("/api/sessions/")) {
       const id = decodeURIComponent(url.pathname.slice("/api/sessions/".length))
-      const sesion = await obtenerSesion(directory, id)
-      enviar(res, 200, sesion)
+      enviar(res, 200, await obtenerSesion(directory, id))
       return
     }
     if (req.method === "POST" && url.pathname === "/api/chat") {
-      const raw = await leerCuerpo(req)
-      const body = JSON.parse(raw) as { sessionId?: unknown; message?: unknown }
+      const body = JSON.parse(await leerCuerpo(req)) as { sessionId?: unknown; message?: unknown }
       if (typeof body.sessionId !== "string" || typeof body.message !== "string" || !body.message.trim()) {
         enviar(res, 400, { ok: false, error: "Envíe sessionId y message." })
         return
       }
-      const turno = await ejecutarTurno(directory, body.sessionId, body.message.trim())
-      enviar(res, 200, turno)
+      enviar(res, 200, await ejecutarTurno(directory, body.sessionId, body.message.trim()))
       return
     }
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
@@ -65,11 +58,11 @@ const server = createServer(async (req, res) => {
     }
     enviar(res, 404, { ok: false, error: "Ruta no encontrada." })
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Error inesperado."
+    const message = error instanceof Error ? error.message : "No pude completar la solicitud."
     enviar(res, 400, { ok: false, error: message })
   }
 })
 
 server.listen(port, () => {
-  console.log(`Agente de órdenes de compra en http://localhost:${port}`)
+  console.log(`Agente de registro de proveedor en http://localhost:${port}`)
 })
