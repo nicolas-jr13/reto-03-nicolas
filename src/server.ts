@@ -4,6 +4,9 @@ import path from "node:path"
 import { ejecutarTurno, obtenerSesion } from "./agent/loop"
 import { configuracionModelo } from "./llm/factory"
 import { directorioProyecto } from "./raiz"
+import { paginaHtml } from "./trazas"
+
+export const maxDuration = 60
 
 const directory = directorioProyecto()
 const port = Number(process.env.PORT ?? 3000)
@@ -31,9 +34,32 @@ async function leerCuerpo(req: IncomingMessage): Promise<string> {
 
 function rutaPedido(req: IncomingMessage): URL {
   const host = req.headers.host ?? "localhost"
-  const encabezado = req.headers["x-forwarded-uri"] || req.headers["x-invoke-path"] || req.headers["x-vercel-original-url"]
-  const bruto = (Array.isArray(encabezado) ? encabezado[0] : encabezado) || req.url || "/"
-  return new URL(bruto, `http://${host}`)
+  const encabezado = req.headers["x-forwarded-uri"] || req.headers["x-vercel-original-url"] || req.headers["x-invoke-path"]
+  const bruto = req.url || (Array.isArray(encabezado) ? encabezado[0] : encabezado) || "/"
+  const url = new URL(bruto, `http://${host}`)
+  if (url.pathname === "/src/server.ts" && encabezado) {
+    const original = Array.isArray(encabezado) ? encabezado[0] : encabezado
+    return new URL(original, `http://${host}`)
+  }
+  return url
+}
+
+async function leerPagina(): Promise<Buffer> {
+  const candidatos = [
+    paginaHtml,
+    new URL("../web/index.html", import.meta.url),
+    path.join(directory, "web", "index.html"),
+    path.join(process.cwd(), "web", "index.html"),
+  ]
+  const fallos: string[] = []
+  for (const candidato of candidatos) {
+    try {
+      return await readFile(candidato)
+    } catch (error) {
+      fallos.push(error instanceof Error ? error.message : "No pude leer la página.")
+    }
+  }
+  throw new Error(fallos[0] ?? "No pude leer la página.")
 }
 
 export default async function manejar(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -59,7 +85,7 @@ export default async function manejar(req: IncomingMessage, res: ServerResponse)
       return
     }
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html" || url.pathname === "/api" || url.pathname === "/api/")) {
-      const html = await readFile(path.join(directory, "web", "index.html"))
+      const html = await leerPagina()
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" })
       res.end(html)
       return

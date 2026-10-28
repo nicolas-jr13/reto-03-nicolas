@@ -90,9 +90,20 @@ async function guardarSesion(directory: string, sesion: Sesion): Promise<void> {
   await writeFile(archivo, JSON.stringify(sesion, null, 2), "utf8")
 }
 
+async function leerTexto(url: URL, respaldo: string): Promise<string> {
+  try {
+    return await readFile(url, "utf8")
+  } catch {
+    return await readFile(respaldo, "utf8")
+  }
+}
+
 async function systemPrompt(directory: string, sesion: Sesion): Promise<string> {
-  const prompt = await readFile(path.join(directory, "agent", "prompt.md"), "utf8")
-  const conocimiento = await readFile(path.join(directory, "src", "knowledge", "registro-proveedor.md"), "utf8")
+  const prompt = await leerTexto(new URL("../../agent/prompt.md", import.meta.url), path.join(directory, "agent", "prompt.md"))
+  const conocimiento = await leerTexto(
+    new URL("../knowledge/registro-proveedor.md", import.meta.url),
+    path.join(directory, "src", "knowledge", "registro-proveedor.md"),
+  )
   return [
     prompt.trim(),
     "",
