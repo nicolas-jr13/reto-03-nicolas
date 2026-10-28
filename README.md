@@ -23,7 +23,13 @@ bun run dev
 
 Abra http://localhost:3000. Elija un caso, por ejemplo `ec-corp-andina`, y pida procesarlo. El chat muestra cada herramienta. Cuando el paquete queda armado, el agente pide confirmación. Solo un mensaje explícito como «envía» escribe `out/<caso>/ENVIO-SIMULADO.md`.
 
-No hay despliegue público en esta entrega. La prueba es local, en el puerto de `PORT` (3000 por defecto).
+En local el puerto es el de `PORT` (3000 por defecto).
+
+## Vercel
+
+El preset es **Node**. El directorio raíz es `./`. No hace falta comando de build. En el proyecto de Vercel defina las mismas variables de `.env.example`, sobre todo `OPENAI_API_KEY`, `OPENAI_MODEL` y `OPENAI_BASE_URL`.
+
+Vercel ejecuta `api/index.ts` como función. El disco del despliegue es de solo lectura, así que `out/` se escribe en `/tmp`. El navegador guarda el historial y lo reenvía en el siguiente turno, para que la conversación continúe aunque la función arranque en otra instancia. Los fixtures se leen y no se modifican. `demo.ts` sigue corriendo en local, sin clave.
 
 ## Demo sin modelo
 

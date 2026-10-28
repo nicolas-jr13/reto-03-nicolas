@@ -170,10 +170,11 @@
         const response = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sessionId, message: text }),
+          body: JSON.stringify({ sessionId, message: text, respaldo: leerRespaldo() }),
         })
         const data = await response.json()
         if (!response.ok) throw new Error(data.error || "No pude enviar el mensaje.")
+        guardarRespaldo(data.respaldo)
         addBubble("assistant", data.reply || "", data.toolCalls || [], Boolean(data.needsConfirmation))
         if (data.needsConfirmation && /responde «envía»|envío simulado/i.test(data.reply || "")) mostrarConfirmacion()
       } catch (error) {
@@ -211,7 +212,38 @@
       })
     })
 
+    function claveRespaldo() {
+      return `proveedor-respaldo:${sessionId}`
+    }
+
+    function guardarRespaldo(respaldo) {
+      if (!respaldo) return
+      try { localStorage.setItem(claveRespaldo(), JSON.stringify(respaldo)) } catch { /* el historial del servidor sigue en este turno */ }
+    }
+
+    function leerRespaldo() {
+      try { return JSON.parse(localStorage.getItem(claveRespaldo()) || "null") } catch { return null }
+    }
+
+    function pintarHistorial(data) {
+      let pending = []
+      for (const message of data.messages || []) {
+        if (message.role === "system") continue
+        if (message.role === "user") addBubble("user", message.content)
+        if (message.role === "assistant" && message.toolCalls?.length) {
+          pending = message.toolCalls.map((call) => ({ name: call.name, arguments: call.arguments, summary: "Llamada registrada en la sesión.", result: "" }))
+        } else if (message.role === "tool") {
+          const slot = pending.find((tool) => !tool.result)
+          if (slot) slot.result = message.content
+        } else if (message.role === "assistant") {
+          addBubble("assistant", message.content, pending, data.estado === "esperando_confirmacion")
+          pending = []
+        }
+      }
+    }
+
     document.querySelector("#nueva").addEventListener("click", () => {
+      localStorage.removeItem(claveRespaldo())
       sessionId = crypto.randomUUID()
       localStorage.setItem("proveedor-session", sessionId)
       document.querySelector(".confirmar")?.remove()
@@ -228,21 +260,16 @@
     }).catch(() => { health.textContent = "No pude leer /api/health." })
 
     fetch(`/api/sessions/${sessionId}`).then((response) => response.json()).then((data) => {
-      let pending = []
-      for (const message of data.messages || []) {
-        if (message.role === "system") continue
-        if (message.role === "user") addBubble("user", message.content)
-        if (message.role === "assistant" && message.toolCalls?.length) {
-          pending = message.toolCalls.map((call) => ({ name: call.name, arguments: call.arguments, summary: "Llamada registrada en la sesión.", result: "" }))
-        } else if (message.role === "tool") {
-          const slot = pending.find((tool) => !tool.result)
-          if (slot) slot.result = message.content
-        } else if (message.role === "assistant") {
-          addBubble("assistant", message.content, pending, data.estado === "esperando_confirmacion")
-          pending = []
-        }
+      const delServidor = (data.messages || []).some((message) => message.role === "user")
+      if (delServidor) pintarHistorial(data)
+      else {
+        const local = leerRespaldo()
+        if (local) pintarHistorial(local)
       }
-    }).catch(() => {})
+    }).catch(() => {
+      const local = leerRespaldo()
+      if (local) pintarHistorial(local)
+    })
   </script>
 </body>
 </html>

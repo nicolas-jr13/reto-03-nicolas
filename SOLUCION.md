@@ -27,6 +27,8 @@ src/agent/loop.ts          estados, historial y tope de iteraciones
 
 El servidor solo concatena el prompt y el conocimiento, y ejecuta el ciclo. Una regla de negocio se cambia en `src/knowledge/` o en las herramientas, no en el HTTP. El módulo `modulo/` reexporta las mismas herramientas y repite el mismo prompt y el mismo conocimiento.
 
+En local, `src/server.ts` escucha con `bun run dev`. En Vercel el mismo manejador se exporta desde `api/` y no usa `import.meta.dir`, que solo existe en Bun. Las escrituras van a `/tmp/reto-01/out` porque el disco del despliegue es de solo lectura. El navegador reenvía el historial del turno anterior, así el contexto sobrevive a una función nueva. Los fixtures siguen en solo lectura.
+
 ## 3. Ciclo del agente
 
 Cada turno guarda el historial en `out/sessions/<id>.json`, junto con el caso activo y el estado: `inicio`, `solicitud_leida`, `campos_mapeados`, `formulario_generado`, `esperando_confirmacion`, `envio_simulado`.
@@ -66,7 +68,7 @@ Dependencias: `zod` para los argumentos, `exceljs` para escribir celdas, `pdf-li
 - La vigencia se compara con la fecha local de la máquina. El 28 de octubre de 2026 la cámara vence el 30 de septiembre de 2026 y los parafiscales el 31 de agosto de 2026, así que ningún caso queda `listo_para_firma`. Un campo faltante no cambia ese estado; un soporte ausente o vencido sí.
 - El identificador extranjero se llena con el NIT colombiano y queda en `requiere_confirmacion`, con la nota «identificador extranjero».
 - El diagnóstico de bugs de la entrega anterior salió de este repositorio: esta sesión solo registra proveedores.
-- No hay enlace público. La defensa puede correr en local.
+- El enlace público es el de Vercel. En local, `bun run dev` y `bun run demo.ts` se comportan igual que antes.
 
 ## 8. Cobertura
 

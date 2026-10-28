@@ -5,6 +5,7 @@ import ExcelJS from "exceljs"
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib"
 import { z } from "zod"
 import { anexarJsonl } from "../control"
+import { raizEscritura } from "../raiz"
 import { toolError, toolOk, type ToolContext } from "../types"
 
 export const UMBRAL_CONFIANZA = 0.85
@@ -343,7 +344,7 @@ async function armar(directory: string, caso: string): Promise<Resultado<Record<
   await mkdir(salida(directory, paquete), { recursive: true })
   const nombreFormulario = path.posix.basename(formulario.data.ruta)
   await copyFile(salida(directory, formulario.data.ruta), salida(directory, `${paquete}/${nombreFormulario}`))
-  const destinos = path.join(directory, "out", caso, "paquete", "soportes")
+  const destinos = salida(directory, path.join("out", caso, "paquete", "soportes"))
   await mkdir(destinos, { recursive: true })
   for (const item of checklist) {
     if (!item.archivo) continue
@@ -643,7 +644,7 @@ async function escribirTexto(directory: string, relativo: string, contenido: str
 }
 
 function salida(directory: string, relativo: string): string {
-  const raiz = path.resolve(directory)
+  const raiz = path.resolve(raizEscritura(directory))
   const destino = path.resolve(raiz, relativo)
   const permitido = path.resolve(raiz, "out")
   if (destino !== permitido && !destino.startsWith(permitido + path.sep)) {

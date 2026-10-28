@@ -3,6 +3,7 @@ import path from "node:path"
 import type { LlmMessage } from "../llm/adapter"
 import { crearAdaptador, estimarTokens } from "../llm/factory"
 import { zodToJsonSchema } from "../llm/json-schema"
+import { raizEscritura } from "../raiz"
 import { listarHerramientas, resumirHerramienta, runTool } from "../tools/registry"
 import type { ToolContext } from "../types"
 
@@ -21,12 +22,19 @@ export type ToolCallVista = {
   result: string
 }
 
+export type RespaldoSesion = {
+  messages: LlmMessage[]
+  estado: EstadoSesion
+  caso: string | null
+}
+
 export type Turno = {
   reply: string
   toolCalls: ToolCallVista[]
   needsConfirmation: boolean
   estado: EstadoSesion
   caso: string | null
+  respaldo: RespaldoSesion
 }
 
 type Sesion = {
@@ -58,7 +66,7 @@ export function esConfirmacionExplicita(mensaje: string): boolean {
 
 function archivoSesion(directory: string, sessionId: string): string {
   if (!/^[A-Za-z0-9_-]{1,80}$/.test(sessionId)) throw new Error("Identificador de sesión inválido.")
-  return path.join(directory, "out", "sessions", `${sessionId}.json`)
+  return path.join(raizEscritura(directory), "out", "sessions", `${sessionId}.json`)
 }
 
 async function leerSesion(directory: string, sessionId: string): Promise<Sesion> {
@@ -101,8 +109,15 @@ export async function obtenerSesion(directory: string, sessionId: string): Promi
   return leerSesion(directory, sessionId)
 }
 
-export async function ejecutarTurno(directory: string, sessionId: string, message: string): Promise<Turno> {
+export async function ejecutarTurno(directory: string, sessionId: string, message: string, respaldo?: unknown): Promise<Turno> {
   const sesion = await leerSesion(directory, sessionId)
+  const previa = interpretarRespaldo(respaldo)
+  const guardados = sesion.messages.filter((item) => item.role !== "system").length
+  if (previa && previa.messages.length >= guardados) {
+    sesion.messages = previa.messages
+    sesion.estado = previa.estado
+    sesion.caso = previa.caso
+  }
   sesion.messages = sesion.messages.filter((item) => item.role !== "system")
   sesion.messages.unshift({ role: "system", content: await systemPrompt(directory, sesion) })
   sesion.messages.push({ role: "user", content: message })
@@ -168,7 +183,43 @@ export async function ejecutarTurno(directory: string, sessionId: string, messag
   }
 
   await guardarSesion(directory, sesion)
-  return { reply, toolCalls: vistas, needsConfirmation, estado: sesion.estado, caso: sesion.caso }
+  return {
+    reply,
+    toolCalls: vistas,
+    needsConfirmation,
+    estado: sesion.estado,
+    caso: sesion.caso,
+    respaldo: {
+      messages: sesion.messages.filter((item) => item.role !== "system"),
+      estado: sesion.estado,
+      caso: sesion.caso,
+    },
+  }
+}
+
+function interpretarRespaldo(valor: unknown): RespaldoSesion | null {
+  if (!valor || typeof valor !== "object") return null
+  const data = valor as { messages?: unknown; estado?: unknown; caso?: unknown }
+  if (!Array.isArray(data.messages)) return null
+  const messages: LlmMessage[] = []
+  for (const item of data.messages) {
+    if (!item || typeof item !== "object") continue
+    const fila = item as LlmMessage
+    if (fila.role !== "user" && fila.role !== "assistant" && fila.role !== "tool") continue
+    if (typeof fila.content !== "string") continue
+    messages.push({
+      role: fila.role,
+      content: fila.content,
+      toolCallId: typeof fila.toolCallId === "string" ? fila.toolCallId : undefined,
+      toolCalls: Array.isArray(fila.toolCalls) ? fila.toolCalls : undefined,
+    })
+  }
+  if (!messages.some((item) => item.role === "user")) return null
+  return {
+    messages,
+    estado: ESTADOS.has(data.estado as EstadoSesion) ? (data.estado as EstadoSesion) : "inicio",
+    caso: typeof data.caso === "string" && data.caso.trim() ? data.caso : null,
+  }
 }
 
 function parsearArgumentos(raw: string): unknown {
