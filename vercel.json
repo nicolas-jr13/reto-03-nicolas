@@ -5,15 +5,15 @@
   ],
   "functions": {
     "src/server.ts": {
-      "maxDuration": 60,
+      "maxDuration": 300,
       "includeFiles": "{web/**,fixtures/**,agent/**,src/knowledge/**,modulo/**}"
     },
     "api/index.ts": {
-      "maxDuration": 60,
+      "maxDuration": 300,
       "includeFiles": "{web/**,fixtures/**,agent/**,src/knowledge/**,modulo/**}"
     },
     "api/[...path].ts": {
-      "maxDuration": 60,
+      "maxDuration": 300,
       "includeFiles": "{web/**,fixtures/**,agent/**,src/knowledge/**,modulo/**}"
     }
   }

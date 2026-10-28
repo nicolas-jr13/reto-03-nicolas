@@ -1,2 +1,2 @@
 export { default } from "../src/server"
-export const maxDuration = 60
+export const maxDuration = 300

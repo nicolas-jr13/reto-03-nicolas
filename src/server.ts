@@ -6,7 +6,7 @@ import { configuracionModelo } from "./llm/factory"
 import { directorioProyecto } from "./raiz"
 import { paginaHtml } from "./trazas"
 
-export const maxDuration = 60
+export const maxDuration = 300
 
 const directory = directorioProyecto()
 const port = Number(process.env.PORT ?? 3000)
